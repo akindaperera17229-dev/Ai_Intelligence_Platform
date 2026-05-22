@@ -1,6 +1,5 @@
 package com.ai.engine.backend.controller;
 
-import com.ai.engine.backend.dto.GitHubPushEventDTO;
 import com.ai.engine.backend.model.EngineeringEvent;
 import com.ai.engine.backend.service.EventIngestionService;
 import org.springframework.web.bind.annotation.*;
@@ -14,16 +13,21 @@ public class WebhookController {
 
     public WebhookController(EventIngestionService service) {
         this.service = service;
-
     }
 
     @PostMapping("/github")
-    public EngineeringEvent receiveGitHubWebhook(
-        @RequestBody GitHubPushEventDTO payload
-    ){
-        return service.processGitHubPush(payload);
-
+    public EngineeringEvent receiveGitHubWebhook(@RequestBody String payload) {
+        return service.ingestEvent("GITHUB", "CODE_PUSH", payload);
     }
-    
-    
+
+    @PostMapping("/jira")
+    public EngineeringEvent receiveJiraWebhook(@RequestBody String payload) {
+        return service.ingestEvent("JIRA", "TICKET_UPDATED", payload);
+    }
+
+    @PostMapping("/slack")
+    public EngineeringEvent receiveSlackWebhook(@RequestBody String payload) {
+        return service.ingestEvent("SLACK", "MESSAGE_SENT", payload);
+    }
 }
+
