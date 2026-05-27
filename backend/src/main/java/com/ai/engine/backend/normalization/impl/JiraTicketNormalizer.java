@@ -86,8 +86,20 @@ public class JiraTicketNormalizer implements EventNormalizer {
             metadata.put("status", status);
             metadata.put("priority", priority);
             metadata.put("project", project);
+            double storyPoints = 0.0;
+            boolean hasStoryPoints = false;
             if (fields.has("storyPoints")) {
-                metadata.put("storyPoints", fields.path("storyPoints").asDouble());
+                storyPoints = fields.path("storyPoints").asDouble();
+                hasStoryPoints = true;
+            } else if (fields.has("story_points")) {
+                storyPoints = fields.path("story_points").asDouble();
+                hasStoryPoints = true;
+            } else if (fields.has("customfield_10016")) {
+                storyPoints = fields.path("customfield_10016").asDouble();
+                hasStoryPoints = true;
+            }
+            if (hasStoryPoints) {
+                metadata.put("storyPoints", storyPoints);
             }
             event.setMetadata(metadata);
 
