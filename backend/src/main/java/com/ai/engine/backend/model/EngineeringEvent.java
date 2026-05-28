@@ -6,6 +6,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.UUID;
 
 @Entity
 @Table(name = "engineering_events")
@@ -21,6 +22,10 @@ public class EngineeringEvent {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // ← Tenant scoping: which company/account owns this event
+    @Column(name = "tenant_id", nullable = false)
+    private UUID tenantId;
 
     /*
      * Normalized event type

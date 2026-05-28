@@ -2,15 +2,18 @@ package com.ai.engine.backend.service;
 
 import com.ai.engine.backend.client.JiraApiClient;
 import com.ai.engine.backend.config.JiraConnectionConfig;
+import com.ai.engine.backend.config.JiraRuntimeConfig;
+import com.ai.engine.backend.context.TenantContext;
 import com.ai.engine.backend.dto.jira.JiraIssueDTO;
 import com.ai.engine.backend.dto.jira.JiraProjectDTO;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Orchestrates pulling data from Jira Cloud REST API and feeding it into
@@ -22,23 +25,36 @@ import java.util.List;
  *
  * The active sync ensures we have a full historical baseline even if webhooks
  * were missed or the workspace was connected after events already happened.
+ * 
+ * Per-Tenant Support:
+ *   - For HTTP requests: TenantCredentialService reads from database per tenant
+ *   - For scheduled tasks: Falls back to static JiraConnectionConfig (default tenant)
  */
 @Service
+@Slf4j
 public class JiraSyncService {
 
-    private static final Logger log = LoggerFactory.getLogger(JiraSyncService.class);
+    private static final UUID DEFAULT_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     private final JiraApiClient jiraApiClient;
-    private final JiraConnectionConfig config;
+    private final JiraConnectionConfig staticConfig;           // Fallback for default tenant
+    private final TenantCredentialService credentialService;  // Runtime per-tenant credentials
+    private final TenantContext tenantContext;
     private final EventIngestionService eventIngestionService;
     private final ObjectMapper objectMapper;
 
-    public JiraSyncService(JiraApiClient jiraApiClient,
-                           JiraConnectionConfig config,
-                           EventIngestionService eventIngestionService,
-                           ObjectMapper objectMapper) {
+    @Autowired
+    public JiraSyncService(
+            JiraApiClient jiraApiClient,
+            JiraConnectionConfig staticConfig,
+            TenantCredentialService credentialService,
+            TenantContext tenantContext,
+            EventIngestionService eventIngestionService,
+            ObjectMapper objectMapper) {
         this.jiraApiClient = jiraApiClient;
-        this.config = config;
+        this.staticConfig = staticConfig;
+        this.credentialService = credentialService;
+        this.tenantContext = tenantContext;
         this.eventIngestionService = eventIngestionService;
         this.objectMapper = objectMapper;
     }
@@ -46,11 +62,13 @@ public class JiraSyncService {
     // -------------------------------------------------------
     // Scheduled full sync — nightly at 2 AM by default
     // Configurable via jira.sync.cron env var
+    // Falls back to static config for backward compatibility
     // -------------------------------------------------------
 
     @Scheduled(cron = "${jira.sync.cron:0 0 2 * * *}")
     public void scheduledSync() {
-        if (!config.isConfigured()) {
+        // For scheduled tasks, use static config (default tenant)
+        if (!staticConfig.isConfigured()) {
             log.debug("Jira sync skipped — not configured. Set JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN.");
             return;
         }
@@ -62,18 +80,23 @@ public class JiraSyncService {
 
     // -------------------------------------------------------
     // Public API — can be triggered manually via REST controller
+    // Uses per-tenant credentials if available
     // -------------------------------------------------------
 
     /**
-     * Performs a full sync of all configured Jira projects.
+     * Performs a full sync of all configured Jira projects for the current tenant.
      * If jira.sync.projects is set, only those project keys are synced.
      * Otherwise, all accessible projects are synced.
      *
      * @return SyncResult with counts of synced and failed issues
      */
     public SyncResult syncAllProjects() {
-        if (!config.hasCredentials()) {
-            log.warn("Jira sync aborted — credentials not configured.");
+        // Try to get per-tenant config from database first
+        JiraRuntimeConfig runtimeConfig = getRuntimeConfig();
+        
+        if (!runtimeConfig.hasCredentials()) {
+            log.warn("Jira sync aborted — credentials not configured for tenant {}", 
+                currentTenantIdOrDefault());
             return new SyncResult(0, 0, "Credentials not configured");
         }
 
@@ -81,14 +104,15 @@ public class JiraSyncService {
         int totalFailed = 0;
 
         try {
-            List<String> projectKeys = config.getSync().getProjectKeyList();
+            List<String> projectKeys = staticConfig.getSync().getProjectKeyList();
 
             if (projectKeys.isEmpty()) {
                 // Sync all accessible projects
-                List<JiraProjectDTO> projects = jiraApiClient.getProjects();
-                log.info("Syncing all {} accessible Jira projects", projects.size());
+                List<JiraProjectDTO> projects = jiraApiClient.getProjects(runtimeConfig);
+                log.info("Syncing all {} accessible Jira projects for tenant {}", 
+                    projects.size(), currentTenantIdOrDefault());
                 for (JiraProjectDTO project : projects) {
-                    SyncResult r = syncProject(project.getKey());
+                    SyncResult r = syncProject(project.getKey(), runtimeConfig);
                     totalSynced += r.synced();
                     totalFailed += r.failed();
                 }
@@ -96,7 +120,7 @@ public class JiraSyncService {
                 // Sync only configured project keys
                 log.info("Syncing {} configured Jira projects: {}", projectKeys.size(), projectKeys);
                 for (String key : projectKeys) {
-                    SyncResult r = syncProject(key.trim());
+                    SyncResult r = syncProject(key.trim(), runtimeConfig);
                     totalSynced += r.synced();
                     totalFailed += r.failed();
                 }
@@ -114,13 +138,13 @@ public class JiraSyncService {
      * @param projectKey  e.g. "PROJ"
      * @return SyncResult for this project
      */
-    public SyncResult syncProject(String projectKey) {
-        log.info("Syncing Jira project: {}", projectKey);
+    private SyncResult syncProject(String projectKey, JiraRuntimeConfig config) {
+        log.info("Syncing Jira project: {} for tenant {}", projectKey, currentTenantIdOrDefault());
         int synced = 0;
         int failed = 0;
 
         try {
-            List<JiraIssueDTO> issues = jiraApiClient.getIssuesForProject(projectKey);
+            List<JiraIssueDTO> issues = jiraApiClient.getIssuesForProject(projectKey, config);
 
             for (JiraIssueDTO issue : issues) {
                 try {
@@ -143,6 +167,47 @@ public class JiraSyncService {
     // -------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------
+
+    /**
+     * Get the appropriate Jira runtime config for the current tenant.
+     * Tries per-tenant database credentials first, falls back to static config.
+     */
+    private JiraRuntimeConfig getRuntimeConfig() {
+        // Try to get from database (per-tenant)
+        if (hasTenantContext()) {
+            try {
+                return credentialService.getJiraConfig();
+            } catch (Exception e) {
+                log.debug("Failed to load per-tenant Jira config: {}", e.getMessage());
+            }
+        }
+        
+        // Fall back to static config
+        return new JiraRuntimeConfig(
+            staticConfig.getBaseUrl(),
+            staticConfig.getUserEmail(),
+            staticConfig.getApiToken()
+        );
+    }
+
+    private boolean hasTenantContext() {
+        try {
+            return tenantContext.hasTenant();
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private UUID currentTenantIdOrDefault() {
+        try {
+            if (tenantContext.hasTenant()) {
+                return tenantContext.getCurrentTenantId();
+            }
+        } catch (RuntimeException ignored) {
+            // Scheduled syncs run outside an HTTP request, so use the seeded default tenant.
+        }
+        return DEFAULT_TENANT_ID;
+    }
 
     /**
      * Converts a JiraIssueDTO to a raw JSON string and feeds it into the

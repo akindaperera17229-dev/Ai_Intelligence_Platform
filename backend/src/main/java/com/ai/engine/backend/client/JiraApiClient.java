@@ -44,6 +44,112 @@ public class JiraApiClient {
     /**
      * Fetches ALL Jira projects the configured user has access to.
      * Handles pagination automatically.
+     * 
+     * Overload: accepts JiraRuntimeConfig for per-tenant requests
+     */
+    public List<JiraProjectDTO> getProjects(com.ai.engine.backend.config.JiraRuntimeConfig runtimeConfig) {
+        if (!runtimeConfig.hasCredentials()) {
+            log.warn("Jira getProjects called without credentials");
+            return new ArrayList<>();
+        }
+        
+        RestClient client = buildRestClient(runtimeConfig);
+        List<JiraProjectDTO> all = new ArrayList<>();
+        int startAt = 0;
+
+        while (true) {
+            String url = UriComponentsBuilder
+                    .fromUriString(runtimeConfig.baseUrl() + "/rest/api/3/project/search")
+                    .queryParam("startAt", startAt)
+                    .queryParam("maxResults", PAGE_SIZE)
+                    .toUriString();
+
+            try {
+                JiraProjectDTO.PageResponse page = client.get()
+                        .uri(url)
+                        .retrieve()
+                        .body(JiraProjectDTO.PageResponse.class);
+
+                if (page == null || page.getValues() == null || page.getValues().isEmpty()) break;
+
+                all.addAll(page.getValues());
+                log.debug("Fetched {} projects (startAt={})", page.getValues().size(), startAt);
+
+                if (page.isLast()) break;
+                startAt += PAGE_SIZE;
+
+            } catch (Exception e) {
+                log.error("Failed to fetch Jira projects at startAt={}: {}", startAt, e.getMessage());
+                break;
+            }
+        }
+
+        log.info("Fetched total {} Jira projects", all.size());
+        return all;
+    }
+
+    /**
+     * Fetches all issues for a given Jira project key using JQL.
+     * Handles pagination automatically.
+     * 
+     * Overload: accepts JiraRuntimeConfig for per-tenant requests
+     *
+     * @param projectKey  e.g. "PROJ"
+     * @param runtimeConfig per-tenant Jira configuration
+     * @return list of all issues (up to Jira API limits)
+     */
+    public List<JiraIssueDTO> getIssuesForProject(String projectKey, com.ai.engine.backend.config.JiraRuntimeConfig runtimeConfig) {
+        if (!runtimeConfig.hasCredentials()) {
+            log.warn("Jira getIssuesForProject called without credentials");
+            return new ArrayList<>();
+        }
+        
+        RestClient client = buildRestClient(runtimeConfig);
+        List<JiraIssueDTO> all = new ArrayList<>();
+        int startAt = 0;
+
+        // Curated fields to minimize payload size
+        String fields = "summary,status,priority,assignee,reporter,project,created,updated,customfield_10016,sprint";
+        String jql = "project=" + projectKey + " ORDER BY updated DESC";
+
+        while (true) {
+            String url = UriComponentsBuilder
+                    .fromUriString(runtimeConfig.baseUrl() + "/rest/api/3/search")
+                    .queryParam("jql", jql)
+                    .queryParam("fields", fields)
+                    .queryParam("startAt", startAt)
+                    .queryParam("maxResults", PAGE_SIZE)
+                    .toUriString();
+
+            try {
+                JiraIssueDTO.SearchResult result = client.get()
+                        .uri(url)
+                        .retrieve()
+                        .body(JiraIssueDTO.SearchResult.class);
+
+                if (result == null || result.getIssues() == null || result.getIssues().isEmpty()) break;
+
+                all.addAll(result.getIssues());
+                log.debug("Fetched {} issues for project {} (startAt={})",
+                        result.getIssues().size(), projectKey, startAt);
+
+                if (startAt + PAGE_SIZE >= result.getTotal()) break;
+                startAt += PAGE_SIZE;
+
+            } catch (Exception e) {
+                log.error("Failed to fetch issues for project {} at startAt={}: {}",
+                        projectKey, startAt, e.getMessage());
+                break;
+            }
+        }
+
+        log.info("Fetched total {} issues for project {}", all.size(), projectKey);
+        return all;
+    }
+
+    /**
+     * Fetches ALL Jira projects the configured user has access to.
+     * Handles pagination automatically.
      */
     public List<JiraProjectDTO> getProjects() {
         assertConfigured();
@@ -178,6 +284,22 @@ public class JiraApiClient {
     // -------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------
+
+    /**
+     * Builds a pre-configured RestClient with Basic Auth header injected on every request.
+     * Overload: accepts JiraRuntimeConfig for per-tenant requests
+     */
+    private RestClient buildRestClient(com.ai.engine.backend.config.JiraRuntimeConfig cfg) {
+        String credentials = cfg.userEmail() + ":" + cfg.apiToken();
+        String encoded = Base64.getEncoder().encodeToString(credentials.getBytes());
+        String authHeader = "Basic " + encoded;
+
+        return RestClient.builder()
+                .defaultHeader("Authorization", authHeader)
+                .defaultHeader("Accept", "application/json")
+                .defaultHeader("Content-Type", "application/json")
+                .build();
+    }
 
     /**
      * Builds a pre-configured RestClient with Basic Auth header injected on every request.

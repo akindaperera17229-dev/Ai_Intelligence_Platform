@@ -44,7 +44,7 @@ class WebhookSecurityFilterTests {
     @Test
     void testDoFilter_GithubWebhook_NoSecret_PassesThrough() throws Exception {
         when(request.getRequestURI()).thenReturn("/webhooks/github");
-        ReflectionTestUtils.setField(filter, "githubSecret", "");
+        ReflectionTestUtils.setField(filter, "githubSecretStatic", "");
 
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         when(request.getInputStream()).thenReturn(new CachedBodyServletInputStream(body));
@@ -62,7 +62,7 @@ class WebhookSecurityFilterTests {
 
         when(request.getRequestURI()).thenReturn("/webhooks/github");
         when(request.getHeader("X-Hub-Signature-256")).thenReturn("sha256=" + signature);
-        ReflectionTestUtils.setField(filter, "githubSecret", secret);
+        ReflectionTestUtils.setField(filter, "githubSecretStatic", secret);
 
         byte[] body = payload.getBytes(StandardCharsets.UTF_8);
         when(request.getInputStream()).thenReturn(new CachedBodyServletInputStream(body));
@@ -79,7 +79,7 @@ class WebhookSecurityFilterTests {
 
         when(request.getRequestURI()).thenReturn("/webhooks/github");
         when(request.getHeader("X-Hub-Signature-256")).thenReturn("sha256=invalid-signature");
-        ReflectionTestUtils.setField(filter, "githubSecret", secret);
+        ReflectionTestUtils.setField(filter, "githubSecretStatic", secret);
 
         byte[] body = payload.getBytes(StandardCharsets.UTF_8);
         when(request.getInputStream()).thenReturn(new CachedBodyServletInputStream(body));

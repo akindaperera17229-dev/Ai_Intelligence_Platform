@@ -1,0 +1,12 @@
+-- ============================================================
+-- V1: Flyway baseline migration
+-- ============================================================
+-- This file marks the existing schema as the baseline.
+-- Flyway will not execute any DDL here — it just records that
+-- V1 has been "applied" so it won't try to re-create existing tables.
+--
+-- Existing tables created by Hibernate (before Flyway was added):
+--   engineering_events
+--   engineers
+--   user_platform_identities
+-- ============================================================

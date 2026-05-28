@@ -1,21 +1,26 @@
 package com.ai.engine.backend.service;
 
-import com.ai.engine.backend.dto.EngineerActivityDTO;
-import com.ai.engine.backend.repository.EngineeringEventRepository;
-import org.springframework.stereotype.Service;
-
 import java.util.ArrayList;
 import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.ai.engine.backend.context.TenantContext;
+import com.ai.engine.backend.dto.EngineerActivityDTO;
+import com.ai.engine.backend.repository.EngineeringEventRepository;
 
 @Service
 public class AnalyticsService {
 
     private final EngineeringEventRepository repository;
+    private final TenantContext tenantContext;
 
     public AnalyticsService(
-            EngineeringEventRepository repository
+            EngineeringEventRepository repository,
+            TenantContext tenantContext
     ) {
         this.repository = repository;
+        this.tenantContext = tenantContext;
     }
 
     /*
@@ -24,7 +29,7 @@ public class AnalyticsService {
     public List<EngineerActivityDTO> getEngineerActivity() {
 
         List<Object[]> rows =
-                repository.getEngineerActivityStats();
+                repository.getEngineerActivityStats(tenantContext.getCurrentTenantId());
 
         List<EngineerActivityDTO> response =
                 new ArrayList<>();

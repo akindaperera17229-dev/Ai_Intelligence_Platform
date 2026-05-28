@@ -8,29 +8,35 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Repository
 public interface EngineeringEventRepository extends JpaRepository<EngineeringEvent, Long> {
 
+    List<EngineeringEvent> findByTenantIdOrderByTimestampDesc(UUID tenantId);
+
     // -------------------------------------------------------
-    // Existing queries (preserved)
+    // Existing queries — TENANT-SCOPED
+    // All queries now filter by tenant_id to isolate data
     // -------------------------------------------------------
 
     @Query("""
             SELECT e.engineerName, COUNT(e)
             FROM EngineeringEvent e
+            WHERE e.tenantId = :tenantId
             GROUP BY e.engineerName
             ORDER BY COUNT(e) DESC
             """)
-    List<Object[]> getEngineerActivityStats();
+    List<Object[]> getEngineerActivityStats(@Param("tenantId") UUID tenantId);
 
     @Query("""
             SELECT e.repositoryName, COUNT(e)
             FROM EngineeringEvent e
+            WHERE e.tenantId = :tenantId
             GROUP BY e.repositoryName
             ORDER BY COUNT(e) DESC
             """)
-    List<Object[]> getRepositoryStats();
+    List<Object[]> getRepositoryStats(@Param("tenantId") UUID tenantId);
 
     // -------------------------------------------------------
     // Intelligence Layer — Bottleneck Detection
@@ -40,12 +46,14 @@ public interface EngineeringEventRepository extends JpaRepository<EngineeringEve
 
     @Query("""
             SELECT e FROM EngineeringEvent e
-            WHERE e.source = :source
+            WHERE e.tenantId = :tenantId
+            AND e.source = :source
             AND e.timestamp < :cutoff
             AND e.eventType NOT IN ('TICKET_CLOSED', 'PR_MERGED', 'PR_CLOSED')
             ORDER BY e.timestamp ASC
             """)
     List<EngineeringEvent> findStaleEvents(
+            @Param("tenantId") UUID tenantId,
             @Param("source") String source,
             @Param("cutoff") LocalDateTime cutoff
     );
@@ -58,11 +66,12 @@ public interface EngineeringEventRepository extends JpaRepository<EngineeringEve
     @Query("""
             SELECT e.engineerName, e.source, COUNT(e)
             FROM EngineeringEvent e
-            WHERE e.engineerName IS NOT NULL
+            WHERE e.tenantId = :tenantId
+            AND e.engineerName IS NOT NULL
             GROUP BY e.engineerName, e.source
             ORDER BY e.engineerName, e.source
             """)
-    List<Object[]> getCrossPlatformActivityByEngineer();
+    List<Object[]> getCrossPlatformActivityByEngineer(@Param("tenantId") UUID tenantId);
 
     // -------------------------------------------------------
     // Intelligence Layer — Daily Velocity Trend
@@ -73,11 +82,15 @@ public interface EngineeringEventRepository extends JpaRepository<EngineeringEve
     @Query(value = """
             SELECT DATE(timestamp), source, COUNT(*)
             FROM engineering_events
-            WHERE timestamp >= :since
+            WHERE tenant_id = :tenantId
+            AND timestamp >= :since
             GROUP BY DATE(timestamp), source
             ORDER BY DATE(timestamp) ASC, source ASC
             """, nativeQuery = true)
-    List<Object[]> getDailyEventCountBySource(@Param("since") LocalDateTime since);
+    List<Object[]> getDailyEventCountBySource(
+            @Param("tenantId") UUID tenantId,
+            @Param("since") LocalDateTime since
+    );
 
     // -------------------------------------------------------
     // Intelligence Layer — Jira Cycle Time
@@ -88,14 +101,18 @@ public interface EngineeringEventRepository extends JpaRepository<EngineeringEve
     @Query("""
             SELECT e.branchName, MIN(e.timestamp), MAX(e.timestamp)
             FROM EngineeringEvent e
-            WHERE e.source = 'JIRA'
+            WHERE e.tenantId = :tenantId
+            AND e.source = 'JIRA'
             AND e.repositoryName = :project
             AND e.branchName IS NOT NULL
             GROUP BY e.branchName
             HAVING COUNT(e) > 1
             ORDER BY MIN(e.timestamp) DESC
             """)
-    List<Object[]> getJiraTicketTimestampPairs(@Param("project") String project);
+    List<Object[]> getJiraTicketTimestampPairs(
+            @Param("tenantId") UUID tenantId,
+            @Param("project") String project
+    );
 
     // -------------------------------------------------------
     // Intelligence Layer — Events within a time window (any source)
@@ -104,11 +121,13 @@ public interface EngineeringEventRepository extends JpaRepository<EngineeringEve
 
     @Query("""
             SELECT e FROM EngineeringEvent e
-            WHERE e.source = :source
+            WHERE e.tenantId = :tenantId
+            AND e.source = :source
             AND e.timestamp BETWEEN :from AND :to
             ORDER BY e.timestamp DESC
             """)
     List<EngineeringEvent> findBySourceAndTimeWindow(
+            @Param("tenantId") UUID tenantId,
             @Param("source") String source,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to
@@ -120,9 +139,13 @@ public interface EngineeringEventRepository extends JpaRepository<EngineeringEve
 
     @Query("""
             SELECT e FROM EngineeringEvent e
-            WHERE e.source = :source
+            WHERE e.tenantId = :tenantId
+            AND e.source = :source
             ORDER BY e.timestamp DESC
             """)
-    List<EngineeringEvent> findBySource(@Param("source") String source);
+    List<EngineeringEvent> findBySource(
+            @Param("tenantId") UUID tenantId,
+            @Param("source") String source
+    );
 }
 

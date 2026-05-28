@@ -3,6 +3,7 @@ package com.ai.engine.backend.model;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "engineers")
@@ -16,10 +17,14 @@ public class Engineer {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // ← Tenant scoping: which company/account owns this engineer profile
+    @Column(name = "tenant_id", nullable = false)
+    private UUID tenantId;
+
     @Column(nullable = false)
     private String fullName;
 
-    @Column(unique = true)
+    @Column
     private String email;
 
     @Column(nullable = false)

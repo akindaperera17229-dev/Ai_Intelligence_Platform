@@ -1,5 +1,6 @@
 package com.ai.engine.backend.service;
 
+import com.ai.engine.backend.context.TenantContext;
 import com.ai.engine.backend.dto.intelligence.BottleneckDTO;
 import com.ai.engine.backend.dto.intelligence.CycleTimeDTO;
 import com.ai.engine.backend.dto.intelligence.VelocityDataPointDTO;
@@ -14,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -23,12 +25,17 @@ import static org.mockito.Mockito.when;
 class EngineeringIntelligenceServiceTests {
 
     private EngineeringEventRepository repository;
+    private TenantContext tenantContext;
     private EngineeringIntelligenceService service;
+    private UUID tenantId;
 
     @BeforeEach
     void setUp() {
+        tenantId = UUID.fromString("00000000-0000-0000-0000-000000000001");
         repository = Mockito.mock(EngineeringEventRepository.class);
-        service = new EngineeringIntelligenceService(repository);
+        tenantContext = Mockito.mock(TenantContext.class);
+        when(tenantContext.getCurrentTenantId()).thenReturn(tenantId);
+        service = new EngineeringIntelligenceService(repository, tenantContext);
     }
 
     @Test
@@ -38,7 +45,7 @@ class EngineeringIntelligenceServiceTests {
 
         Object[] pair1 = new Object[]{"PROJ-1", created, completed};
         List<Object[]> pairsList = Arrays.asList(new Object[][]{ pair1 });
-        when(repository.getJiraTicketTimestampPairs("PROJ")).thenReturn(pairsList);
+        when(repository.getJiraTicketTimestampPairs(tenantId, "PROJ")).thenReturn(pairsList);
 
         CycleTimeDTO dto = service.getCycleTime("PROJ");
 
@@ -52,7 +59,7 @@ class EngineeringIntelligenceServiceTests {
     @Test
     void testGetCycleTime_NoData() {
         List<Object[]> emptyList = Collections.emptyList();
-        when(repository.getJiraTicketTimestampPairs("PROJ")).thenReturn(emptyList);
+        when(repository.getJiraTicketTimestampPairs(tenantId, "PROJ")).thenReturn(emptyList);
 
         CycleTimeDTO dto = service.getCycleTime("PROJ");
 
@@ -82,9 +89,9 @@ class EngineeringIntelligenceServiceTests {
         githubEvent.setRepositoryName("repo-1");
         githubEvent.setTimestamp(now.minusDays(10));
 
-        when(repository.findStaleEvents(eq("JIRA"), any(LocalDateTime.class))).thenReturn(List.of(jiraEvent));
-        when(repository.findStaleEvents(eq("GITHUB"), any(LocalDateTime.class))).thenReturn(List.of(githubEvent));
-        when(repository.findStaleEvents(eq("SLACK"), any(LocalDateTime.class))).thenReturn(Collections.emptyList());
+        when(repository.findStaleEvents(eq(tenantId), eq("JIRA"), any(LocalDateTime.class))).thenReturn(List.of(jiraEvent));
+        when(repository.findStaleEvents(eq(tenantId), eq("GITHUB"), any(LocalDateTime.class))).thenReturn(List.of(githubEvent));
+        when(repository.findStaleEvents(eq(tenantId), eq("SLACK"), any(LocalDateTime.class))).thenReturn(Collections.emptyList());
 
         List<BottleneckDTO> bottlenecks = service.detectBottlenecks(3);
 
@@ -102,7 +109,7 @@ class EngineeringIntelligenceServiceTests {
         Object[] row2 = new Object[]{"Akinda", "JIRA", 5L};
         Object[] row3 = new Object[]{"John", "SLACK", 20L};
 
-        when(repository.getCrossPlatformActivityByEngineer()).thenReturn(Arrays.asList(row1, row2, row3));
+        when(repository.getCrossPlatformActivityByEngineer(tenantId)).thenReturn(Arrays.asList(row1, row2, row3));
 
         List<WorkloadDTO> workload = service.getEngineerWorkload();
 
@@ -126,7 +133,7 @@ class EngineeringIntelligenceServiceTests {
         Object[] row1 = new Object[]{dateVal, "GITHUB", 15L};
         Object[] row2 = new Object[]{dateVal, "JIRA", 3L};
 
-        when(repository.getDailyEventCountBySource(any(LocalDateTime.class))).thenReturn(Arrays.asList(row1, row2));
+        when(repository.getDailyEventCountBySource(eq(tenantId), any(LocalDateTime.class))).thenReturn(Arrays.asList(row1, row2));
 
         List<VelocityDataPointDTO> trend = service.getVelocityTrend(14);
 

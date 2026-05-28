@@ -1,19 +1,25 @@
 package com.ai.engine.backend.service;
 
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.ai.engine.backend.context.TenantContext;
 import com.ai.engine.backend.dto.intelligence.BottleneckDTO;
 import com.ai.engine.backend.dto.intelligence.CycleTimeDTO;
 import com.ai.engine.backend.dto.intelligence.VelocityDataPointDTO;
 import com.ai.engine.backend.dto.intelligence.WorkloadDTO;
 import com.ai.engine.backend.model.EngineeringEvent;
 import com.ai.engine.backend.repository.EngineeringEventRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Unified Engineering Intelligence Service — Layer 3 of the platform architecture.
@@ -38,9 +44,14 @@ public class EngineeringIntelligenceService {
     private static final Logger log = LoggerFactory.getLogger(EngineeringIntelligenceService.class);
 
     private final EngineeringEventRepository repository;
+    private final TenantContext tenantContext;
 
-    public EngineeringIntelligenceService(EngineeringEventRepository repository) {
+    public EngineeringIntelligenceService(
+            EngineeringEventRepository repository,
+            TenantContext tenantContext
+    ) {
         this.repository = repository;
+        this.tenantContext = tenantContext;
     }
 
     // -------------------------------------------------------
@@ -58,7 +69,8 @@ public class EngineeringIntelligenceService {
     public CycleTimeDTO getCycleTime(String project) {
         log.debug("Calculating cycle time for project: {}", project);
 
-        List<Object[]> rows = repository.getJiraTicketTimestampPairs(project);
+        UUID tenantId = tenantContext.getCurrentTenantId();
+        List<Object[]> rows = repository.getJiraTicketTimestampPairs(tenantId, project);
 
         if (rows == null || rows.isEmpty()) {
             return new CycleTimeDTO(project, 0, 0, 0, 0);
@@ -113,10 +125,11 @@ public class EngineeringIntelligenceService {
         log.debug("Detecting bottlenecks: stuckDays={}", stuckDays);
 
         LocalDateTime cutoff = LocalDateTime.now().minusDays(stuckDays);
+        UUID tenantId = tenantContext.getCurrentTenantId();
         List<BottleneckDTO> bottlenecks = new ArrayList<>();
 
         for (String source : List.of("JIRA", "GITHUB", "SLACK")) {
-            List<EngineeringEvent> staleEvents = repository.findStaleEvents(source, cutoff);
+            List<EngineeringEvent> staleEvents = repository.findStaleEvents(tenantId, source, cutoff);
 
             for (EngineeringEvent event : staleEvents) {
                 long daysSince = ChronoUnit.DAYS.between(
@@ -158,7 +171,8 @@ public class EngineeringIntelligenceService {
     public List<WorkloadDTO> getEngineerWorkload() {
         log.debug("Fetching cross-platform engineer workload");
 
-        List<Object[]> rows = repository.getCrossPlatformActivityByEngineer();
+        UUID tenantId = tenantContext.getCurrentTenantId();
+        List<Object[]> rows = repository.getCrossPlatformActivityByEngineer(tenantId);
 
         // Build a map: engineerName → WorkloadDTO
         Map<String, WorkloadDTO> workloadMap = new LinkedHashMap<>();
@@ -195,7 +209,8 @@ public class EngineeringIntelligenceService {
         log.debug("Fetching velocity trend for last {} days", days);
 
         LocalDateTime since = LocalDateTime.now().minusDays(days);
-        List<Object[]> rows = repository.getDailyEventCountBySource(since);
+        UUID tenantId = tenantContext.getCurrentTenantId();
+        List<Object[]> rows = repository.getDailyEventCountBySource(tenantId, since);
 
         List<VelocityDataPointDTO> result = new ArrayList<>();
 
